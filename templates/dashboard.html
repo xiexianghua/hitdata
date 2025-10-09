@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高尔夫击球数据看板</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; color: white; margin-bottom: 40px; }
+        .header h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .header p { font-size: 1.2rem; opacity: 0.9; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; margin-bottom: 40px; }
+        .device-card { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); transition: transform 0.3s ease; }
+        .device-card:hover { transform: translateY(-5px); }
+        .device-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 2px solid #f0f0f0; }
+        .device-name { font-size: 1.3rem; font-weight: bold; color: #333; cursor: pointer; transition: color 0.3s ease; }
+        .device-name:hover { color: #667eea; }
+        .device-mac { font-size: 0.9rem; color: #666; font-family: monospace; }
+        .device-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+        .firmware-selector { padding: 5px 8px; border-radius: 5px; border: 1px solid #ddd; font-size: 0.9rem; background-color: #f9f9f9; }
+        .action-btn-group { display: flex; gap: 10px; }
+        .action-btn { background: none; border: none; cursor: pointer; padding: 5px; border-radius: 50%; transition: background-color 0.3s ease; font-size: 1.2rem; }
+        .rename-btn { color: #667eea; }
+        .delete-btn { color: #ff6b6b; }
+        .action-btn:hover { background-color: #f0f0f0; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border-radius: 15px; width: 80%; max-width: 400px; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+        .modal-header { font-size: 1.2rem; font-weight: bold; margin-bottom: 15px; color: #333; }
+        .modal-input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; font-size: 1rem; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px; }
+        .modal-btn { padding: 8px 16px; border: none; border-radius: 5px; cursor: pointer; font-size: 0.9rem; transition: opacity 0.3s ease; }
+        .modal-btn:hover { opacity: 0.8; }
+        .modal-btn.primary { background-color: #667eea; color: white; }
+        .modal-btn.secondary { background-color: #f0f0f0; color: #666; }
+        .modal-btn.danger { background-color: #ff6b6b; color: white; }
+        .stats-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
+        .stat-item { text-align: center; padding: 15px; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-radius: 10px; }
+        .stat-value { font-size: 1.8rem; font-weight: bold; margin-bottom: 5px; }
+        .stat-label { font-size: 0.9rem; opacity: 0.9; }
+        .chart-container { position: relative; height: 200px; margin-top: 20px; }
+        .loading, .no-data { text-align: center; color: white; font-size: 1.2rem; margin: 50px 0; }
+        .error { background: #ff6b6b; color: white; padding: 15px; border-radius: 10px; text-align: center; margin: 20px 0; }
+        .refresh-btn { background: white; color: #667eea; border: none; padding: 12px 24px; border-radius: 25px; font-size: 1rem; cursor: pointer; transition: all 0.3s ease; margin-bottom: 20px; }
+        .refresh-btn:hover { background: #f8f9fa; transform: translateY(-2px); }
+        .last-update { text-align: center; color: white; opacity: 0.8; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏌️ 高尔夫击球数据看板</h1>
+            <p>实时监控各设备每日击球数据</p>
+        </div>
+        
+        <div style="text-align: center;">
+            <button class="refresh-btn" onclick="init()">🔄 刷新数据</button>
+            <div class="last-update" id="lastUpdate">正在加载...</div>
+        </div>
+        
+        <div id="loading" class="loading">📊 正在加载数据...</div>
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="statsContainer" class="stats-grid" style="display: none;"></div>
+        <div id="noData" class="no-data" style="display: none;">🤷‍♂️ 没有可显示的数据。</div>
+    </div>
+
+    <!-- Modals (Rename, Delete) -->
+    <div id="renameModal" class="modal">...</div>
+    <div id="deleteModal" class="modal">...</div>
+
+    <script>
+        let charts = {};
+        let currentDeviceId = null;
+        let allDeviceData = {};
+        let currentSelections = {};
+        let shortIdToFullIdMap = {};
+        let isInitialLoad = true;
+
+        // Get a map of device firmware selections from a single URL query parameter
+        function getSelectionsFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            const selectionsStr = params.get('selections');
+            const selections = {};
+            if (selectionsStr) {
+                selectionsStr.split(',').forEach(pair => {
+                    const [shortId, version] = pair.split(':');
+                    if (shortId && version && shortIdToFullIdMap[shortId]) {
+                        const fullId = shortIdToFullIdMap[shortId];
+                        selections[fullId] = version;
+                    }
+                });
+            }
+            return selections;
+        }
+
+        // Update the single 'selections' URL query parameter using short IDs
+        function updateURL() {
+            const url = new URL(window.location);
+            const selectionPairs = Object.entries(currentSelections)
+                .filter(([_, version]) => version !== 'all')
+                .map(([deviceId, version]) => `${deviceId.slice(-8)}:${version}`);
+
+            if (selectionPairs.length > 0) {
+                url.searchParams.set('selections', selectionPairs.join(','));
+            } else {
+                url.searchParams.delete('selections');
+            }
+            history.replaceState({}, '', url);
+        }
+
+        async function loadData() {
+            const loadingEl = document.getElementById('loading');
+            const errorEl = document.getElementById('error');
+            const containerEl = document.getElementById('statsContainer');
+            const lastUpdateEl = document.getElementById('lastUpdate');
+            const noDataEl = document.getElementById('noData');
+
+            if (isInitialLoad) {
+                loadingEl.style.display = 'block';
+                errorEl.style.display = 'none';
+                containerEl.style.display = 'none';
+                noDataEl.style.display = 'none';
+            } else {
+                lastUpdateEl.textContent = '正在刷新...';
+            }
+
+            try {
+                const response = await fetch('/api/dashboard_data');
+                if (!response.ok) throw new Error('获取数据失败');
+                
+                const data = await response.json();
+
+                // Reset and build the device data maps
+                allDeviceData = {};
+                shortIdToFullIdMap = {};
+                data.forEach(device => {
+                    allDeviceData[device.device_id] = device;
+                    shortIdToFullIdMap[device.device_id.slice(-8)] = device.device_id;
+                });
+
+                renderDashboard(data);
+                
+                lastUpdateEl.textContent = `最后更新: ${new Date().toLocaleString('zh-CN')}`;
+                
+                if (isInitialLoad) {
+                    loadingEl.style.display = 'none';
+                    if (data.length > 0) {
+                        containerEl.style.display = 'grid';
+                    } else {
+                        noDataEl.style.display = 'block';
+                    }
+                }
+                
+            } catch (error) {
+                if (isInitialLoad) {
+                    loadingEl.style.display = 'none';
+                    errorEl.style.display = 'block';
+                    errorEl.textContent = `错误: ${error.message}`;
+                } else {
+                    lastUpdateEl.textContent = `刷新失败: ${error.message}`;
+                }
+            } finally {
+                isInitialLoad = false;
+            }
+        }
+        
+        function renderDashboard(data) {
+            const container = document.getElementById('statsContainer');
+            const existingCardIds = new Set([...container.children].map(c => c.id));
+            const newCardIds = new Set();
+
+            // On first load or if selections are lost, populate from URL
+            if (Object.keys(currentSelections).length === 0) {
+                currentSelections = getSelectionsFromURL();
+            }
+
+            // Update existing cards and add new ones
+            data.forEach(device => {
+                const macId = device.device_id.replace(/:/g, '');
+                const cardId = `card-${macId}`;
+                newCardIds.add(cardId);
+
+                const existingCard = document.getElementById(cardId);
+
+                if (existingCard) {
+                    // Card exists, update it
+                    const nameEl = existingCard.querySelector('.device-name');
+                    if (nameEl && nameEl.textContent !== device.device_name) {
+                        nameEl.textContent = device.device_name;
+                    }
+
+                    const selector = existingCard.querySelector('.firmware-selector');
+                    if (selector) {
+                        const currentSelectorValue = selector.value;
+                        const versions = Object.keys(device.stats_by_version).sort().reverse();
+                        
+                        let optionsHTML = `<option value="all">所有版本</option>`;
+                        versions.forEach(v => {
+                            optionsHTML += `<option value="${v}">${v}</option>`;
+                        });
+                        selector.innerHTML = optionsHTML;
+
+                        if ([...selector.options].some(opt => opt.value === currentSelectorValue)) {
+                            selector.value = currentSelectorValue;
+                        } else {
+                            selector.value = 'all';
+                            currentSelections[device.device_id] = 'all'; // Reset selection
+                        }
+                    }
+                    
+                    updateCardDisplay(device.device_id, selector ? selector.value : 'all', false);
+
+                } else {
+                    // New device, create and append a new card
+                    const card = createDeviceCard(device);
+                    container.appendChild(card);
+                    
+                    const selectedVersion = currentSelections[device.device_id] || 'all';
+                    const selector = card.querySelector('.firmware-selector');
+                    if (selector) {
+                        if ([...selector.options].some(opt => opt.value === selectedVersion)) {
+                            selector.value = selectedVersion;
+                        }
+                    }
+                    setTimeout(() => updateCardDisplay(device.device_id, selectedVersion, false), 0);
+                }
+            });
+
+            // Remove old cards for devices that no longer exist
+            existingCardIds.forEach(cardId => {
+                if (!newCardIds.has(cardId)) {
+                    const cardToRemove = document.getElementById(cardId);
+                    if (cardToRemove) {
+                        const chartCanvasId = cardToRemove.querySelector('canvas').id;
+                        if (charts[chartCanvasId]) {
+                            charts[chartCanvasId].destroy();
+                            delete charts[chartCanvasId];
+                        }
+                        cardToRemove.remove();
+                    }
+                }
+            });
+        }
+        
+        function createDeviceCard(device) {
+            const card = document.createElement('div');
+            const macId = device.device_id.replace(/:/g, '');
+            card.className = 'device-card';
+            card.id = `card-${macId}`;
+
+            const versions = Object.keys(device.stats_by_version).sort().reverse();
+            let selectorHTML = `<select class="firmware-selector" onchange="updateCardDisplay('${device.device_id}', this.value, true)">`;
+            selectorHTML += `<option value="all">所有版本</option>`;
+            versions.forEach(v => {
+                selectorHTML += `<option value="${v}">${v}</option>`;
+            });
+            selectorHTML += `</select>`;
+
+            card.innerHTML = `
+                <div class="device-header">
+                    <div>
+                        <div class="device-name" onclick="openRenameModal('${device.device_id}')" title="点击重命名">${device.device_name}</div>
+                        <div class="device-mac" title="${device.device_id}">...${device.device_id.slice(-12)}</div>
+                    </div>
+                    <div class="device-actions">
+                        ${selectorHTML}
+                        <div class="action-btn-group">
+                            <button class="action-btn rename-btn" onclick="openRenameModal('${device.device_id}')" title="重命名">✏️</button>
+                            <button class="action-btn delete-btn" onclick="openDeleteModal('${device.device_id}')" title="删除">🗑️</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="stats-summary" id="summary-${macId}"></div>
+                <div class="chart-container">
+                    <canvas id="chart-${macId}"></canvas>
+                </div>
+            `;
+            return card;
+        }
+
+        function updateCardDisplay(deviceId, selectedVersion, shouldUpdateURL = true) {
+            currentSelections[deviceId] = selectedVersion;
+            
+            if (shouldUpdateURL) {
+                updateURL();
+            }
+
+            const device = allDeviceData[deviceId];
+            if (!device) return;
+
+            let statsToDisplay = [];
+            if (selectedVersion === 'all') {
+                const allStats = Object.values(device.stats_by_version).flat();
+                const mergedStats = {};
+                allStats.forEach(stat => {
+                    if (mergedStats[stat.date]) {
+                        mergedStats[stat.date].hit_count += stat.hit_count;
+                    } else {
+                        mergedStats[stat.date] = { ...stat };
+                    }
+                });
+                statsToDisplay = Object.values(mergedStats);
+            } else {
+                statsToDisplay = device.stats_by_version[selectedVersion] || [];
+            }
+
+            const totalHits = statsToDisplay.reduce((sum, stat) => sum + stat.hit_count, 0);
+            const today = new Date().toISOString().split('T')[0];
+            const todayHits = statsToDisplay.find(s => s.date === today)?.hit_count || 0;
+            const uniqueDays = statsToDisplay.length;
+
+            const macId = deviceId.replace(/:/g, '');
+            const summaryContainer = document.getElementById(`summary-${macId}`);
+            summaryContainer.innerHTML = `
+                <div class="stat-item"><div class="stat-value">${totalHits}</div><div class="stat-label">总击球数</div></div>
+                <div class="stat-item"><div class="stat-value">${todayHits}</div><div class="stat-label">今日击球</div></div>
+                <div class="stat-item"><div class="stat-value">${uniqueDays}</div><div class="stat-label">活跃天数</div></div>
+            `;
+
+            createChart(macId, statsToDisplay);
+        }
+        
+        function createChart(macId, dailyStats) {
+            const canvasId = `chart-${macId}`;
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+
+            const sortedData = [...dailyStats].sort((a, b) => new Date(a.date) - new Date(b.date));
+            const ctx = canvas.getContext('2d');
+
+            if (charts[canvasId]) {
+                charts[canvasId].destroy();
+            }
+            
+            charts[canvasId] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: sortedData.map(d => new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })),
+                    datasets: [{
+                        label: '每日击球数',
+                        data: sortedData.map(d => d.hit_count),
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: '#667eea',
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
+                }
+            });
+        }
+        
+        // Placeholder for modals and their functions
+        document.querySelector('#renameModal').innerHTML = `<div class="modal-content"><div class="modal-header">重命名设备</div><input type="text" id="renameInput" class="modal-input" placeholder="请输入设备名称" maxlength="50"><div class="modal-actions"><button class="modal-btn secondary" onclick="closeRenameModal()">取消</button><button class="modal-btn primary" onclick="confirmRename()">保存</button></div></div>`;
+        document.querySelector('#deleteModal').innerHTML = `<div class="modal-content"><div class="modal-header">确认删除设备</div><p>确定要删除设备 <strong id="deleteDeviceName"></strong> 吗？</p><p style="color: #ff6b6b; font-size: 0.9rem; margin-top: 10px;">此操作将删除该设备的所有数据，且不可恢复！</p><div class="modal-actions"><button class="modal-btn secondary" onclick="closeDeleteModal()">取消</button><button class="modal-btn danger" onclick="confirmDelete()">确认删除</button></div></div>`;
+
+        function openRenameModal(deviceId) {
+            currentDeviceId = deviceId;
+            document.getElementById('renameInput').value = allDeviceData[deviceId].device_name;
+            document.getElementById('renameModal').style.display = 'block';
+            document.getElementById('renameInput').focus();
+        }
+        function closeRenameModal() { document.getElementById('renameModal').style.display = 'none'; }
+        function openDeleteModal(deviceId) {
+            currentDeviceId = deviceId;
+            document.getElementById('deleteDeviceName').textContent = allDeviceData[deviceId].device_name;
+            document.getElementById('deleteModal').style.display = 'block';
+        }
+        function closeDeleteModal() { document.getElementById('deleteModal').style.display = 'none'; }
+        async function confirmRename() {
+            const newName = document.getElementById('renameInput').value.trim();
+            if (!newName) { alert('设备名称不能为空'); return; }
+            try {
+                const response = await fetch(`/api/devices/${currentDeviceId}/rename`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ device_name: newName }) });
+                if (!response.ok) { const error = await response.json(); throw new Error(error.error || '重命名失败'); }
+                closeRenameModal();
+                init();
+            } catch (error) { alert(`重命名失败: ${error.message}`); }
+        }
+        async function confirmDelete() {
+            try {
+                const response = await fetch(`/api/devices/${currentDeviceId}`, { method: 'DELETE' });
+                if (!response.ok) { const error = await response.json(); throw new Error(error.error || '删除失败'); }
+                closeDeleteModal();
+                init();
+            } catch (error) { alert(`删除失败: ${error.message}`); }
+        }
+        document.getElementById('renameInput').addEventListener('keypress', e => { if (e.key === 'Enter') confirmRename(); });
+        window.onclick = e => { if (e.target.classList.contains('modal')) { e.target.style.display = 'none'; } };
+        
+        async function init() {
+            await loadData();
+        }
+
+        // Auto-refresh every 15 seconds
+        setInterval(init, 15000);
+        
+        // Initial load
+        init();
+    </script>
+</body>
+</html>

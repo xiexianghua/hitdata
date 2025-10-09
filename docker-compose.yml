@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  golf-dashboard:
+    build: .
+    container_name: golf-stats-dashboard
+    ports:
+      - "3030:5000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+    restart: unless-stopped
